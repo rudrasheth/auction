@@ -16,6 +16,9 @@ export default function AuctionRoom({ params }) {
     const [lastSold, setLastSold] = useState(null); // { name, amount, team, playerId }
     const [isProcessing, setIsProcessing] = useState(false);
     const [finished, setFinished] = useState(false);
+    const [isEditing, setIsEditing] = useState(false);
+    const [editName, setEditName] = useState('');
+    const [editAmount, setEditAmount] = useState('');
 
     const fetchTeams = async () => {
         const res = await fetch(`/api/teams?category=${category}`);
@@ -83,6 +86,31 @@ export default function AuctionRoom({ params }) {
             await fetchTeams();
         } else {
             alert('Undo failed');
+        }
+        setIsProcessing(false);
+    };
+
+    const handleSaveEdit = async () => {
+        if (!editName || !editAmount) return;
+
+        setIsProcessing(true);
+        const res = await fetch('/api/auction/edit', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                playerId: lastSold.playerId,
+                newName: editName,
+                newAmount: Number(editAmount)
+            })
+        });
+
+        const data = await res.json();
+        if (res.ok) {
+            setLastSold(prev => ({ ...prev, name: editName, amount: editAmount }));
+            setIsEditing(false);
+            await fetchTeams();
+        } else {
+            alert(data.error);
         }
         setIsProcessing(false);
     };
@@ -240,20 +268,39 @@ export default function AuctionRoom({ params }) {
                                 <h3 style={{ color: 'var(--success)', margin: 0 }}>Last Sale</h3>
                                 <span style={{ fontSize: '0.9rem', opacity: 0.8 }}>Just Now</span>
                             </div>
-                            <button
-                                onClick={handleUndo}
-                                className="btn-secondary"
-                                style={{
-                                    fontSize: '0.9rem',
-                                    padding: '8px 16px',
-                                    background: 'rgba(239, 68, 68, 0.2)',
-                                    borderColor: 'var(--danger)',
-                                    color: '#fff',
-                                    whiteSpace: 'nowrap'
-                                }}
-                            >
-                                Undo Mistake ↩️
-                            </button>
+                            <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                <button
+                                    onClick={() => {
+                                        setEditName(lastSold.name);
+                                        setEditAmount(lastSold.amount);
+                                        setIsEditing(true);
+                                    }}
+                                    className="btn-secondary"
+                                    style={{
+                                        fontSize: '0.9rem',
+                                        padding: '8px 16px',
+                                        borderColor: 'var(--primary)',
+                                        color: 'var(--primary)',
+                                        whiteSpace: 'nowrap'
+                                    }}
+                                >
+                                    Edit ✏️
+                                </button>
+                                <button
+                                    onClick={handleUndo}
+                                    className="btn-secondary"
+                                    style={{
+                                        fontSize: '0.9rem',
+                                        padding: '8px 16px',
+                                        background: 'rgba(239, 68, 68, 0.2)',
+                                        borderColor: 'var(--danger)',
+                                        color: '#fff',
+                                        whiteSpace: 'nowrap'
+                                    }}
+                                >
+                                    Undo Mistake ↩️
+                                </button>
+                            </div>
                         </div>
                         <p style={{ fontSize: '1.8rem', margin: '0.5rem 0', lineHeight: 1.2 }}>
                             <span style={{ color: 'white', fontWeight: 'bold' }}>{lastSold.name}</span> <br />
@@ -292,6 +339,49 @@ export default function AuctionRoom({ params }) {
                     ))}
                 </div>
             </div>
-        </div>
+
+
+            {/* Edit Modal */}
+            {
+                isEditing && (
+                    <div style={{
+                        position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+                        background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(5px)',
+                        zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center'
+                    }}>
+                        <div className="glass-card animate-fade-in" style={{ width: '90%', maxWidth: '500px', padding: '2rem' }}>
+                            <h2 className="text-gradient" style={{ marginBottom: '1.5rem', textAlign: 'center' }}>Edit Detail</h2>
+
+                            <div className="col" style={{ gap: '1rem' }}>
+                                <div>
+                                    <label>Correct Name</label>
+                                    <input
+                                        value={editName}
+                                        onChange={e => setEditName(e.target.value)}
+                                        style={{ width: '100%', padding: '1rem', fontSize: '1.2rem', marginTop: '0.5rem' }}
+                                    />
+                                </div>
+                                <div>
+                                    <label>Correct Price</label>
+                                    <input
+                                        type="number"
+                                        value={editAmount}
+                                        onChange={e => setEditAmount(e.target.value)}
+                                        style={{ width: '100%', padding: '1rem', fontSize: '1.2rem', marginTop: '0.5rem' }}
+                                    />
+                                </div>
+
+                                <div className="flex-between" style={{ marginTop: '1rem' }}>
+                                    <button onClick={() => setIsEditing(false)} className="btn-secondary" style={{ width: '48%' }}>Cancel</button>
+                                    <button onClick={handleSaveEdit} className="btn-primary" style={{ width: '48%' }} disabled={isProcessing}>
+                                        {isProcessing ? 'Saving...' : 'Save Changes'}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )
+            }
+        </div >
     );
 }
