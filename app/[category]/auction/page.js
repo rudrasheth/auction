@@ -19,12 +19,23 @@ export default function AuctionRoom({ params }) {
     const [isEditing, setIsEditing] = useState(false);
     const [editName, setEditName] = useState('');
     const [editAmount, setEditAmount] = useState('');
+    const [editTeam, setEditTeam] = useState('');
 
     const fetchTeams = async () => {
-        const res = await fetch(`/api/teams?category=${category}`);
-        const data = await res.json();
-        if (data.teams) {
-            setTeams(data.teams);
+        try {
+            console.log('[Auction] Fetching teams for category:', category);
+            const res = await fetch(`/api/teams?category=${category}`);
+            const data = await res.json();
+            console.log('[Auction] Teams data received:', data);
+
+            if (res.ok && data.teams) {
+                setTeams(data.teams);
+            } else {
+                console.error('[Auction] Failed to fetch teams:', data.error);
+                // alert('Failed to load teams: ' + (data.error || 'Unknown error'));
+            }
+        } catch (error) {
+            console.error('[Auction] Error fetching teams:', error);
         }
         setLoading(false);
     };
@@ -70,25 +81,7 @@ export default function AuctionRoom({ params }) {
         setIsProcessing(false);
     };
 
-    const handleUndo = async () => {
-        if (!lastSold || !lastSold.playerId) return;
-        if (!confirm(`Are you sure you want to UNDO the sale of ${lastSold.name}? This will refund the team and remove the player.`)) return;
 
-        setIsProcessing(true);
-        const res = await fetch('/api/auction/undo', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ playerId: lastSold.playerId })
-        });
-
-        if (res.ok) {
-            setLastSold(null);
-            await fetchTeams();
-        } else {
-            alert('Undo failed');
-        }
-        setIsProcessing(false);
-    };
 
     const handleSaveEdit = async () => {
         if (!editName || !editAmount) return;
@@ -100,7 +93,8 @@ export default function AuctionRoom({ params }) {
             body: JSON.stringify({
                 playerId: lastSold.playerId,
                 newName: editName,
-                newAmount: Number(editAmount)
+                newAmount: Number(editAmount),
+                newTeamId: editTeam // Send new Team ID
             })
         });
 
@@ -115,48 +109,55 @@ export default function AuctionRoom({ params }) {
         setIsProcessing(false);
     };
 
-    const handleDownloadCSV = () => {
-        // Headers: Team Name, Player Name, Sold Price, Category
-        const headers = ['Team Name', 'Player Name', 'Price', 'Category'];
+    const handleDownloadExcel = async () => {
+        // Dynamic import to include xlsx only when needed
+        const XLSX = (await import('xlsx'));
+
         const rows = [];
 
+        // Arrange data team-wise
         teams.forEach(team => {
             if (team.playersBought && team.playersBought.length > 0) {
                 team.playersBought.forEach(player => {
-                    const pName = typeof player === 'object' ? player.name : 'Unknown';
-                    const pPrice = typeof player === 'object' ? player.soldPrice : 0;
-                    rows.push([team.name, pName, pPrice, category]);
+                    rows.push({
+                        'Team Name': team.name,
+                        'Player Name': player.name || 'Unknown',
+                        'Sold Price': player.soldPrice || 0,
+                        'Category': category
+                    });
                 });
             } else {
-                // Optional: Include teams with no players?
-                rows.push([team.name, 'No Players', 0, category]);
+                // Include teams with no players to show they participated
+                rows.push({
+                    'Team Name': team.name,
+                    'Player Name': 'No Players',
+                    'Sold Price': 0,
+                    'Category': category
+                });
             }
         });
 
         if (rows.length === 0) {
-            alert("No players found to download.");
+            alert("No data to export.");
             return;
         }
 
-        const csvContent = "data:text/csv;charset=utf-8,"
-            + headers.join(",") + "\n"
-            + rows.map(e => e.join(",")).join("\n");
+        // Create Worksheet
+        const worksheet = XLSX.utils.json_to_sheet(rows);
 
-        const encodedUri = encodeURI(csvContent);
-        const link = document.createElement("a");
-        link.setAttribute("href", encodedUri);
-        link.setAttribute("download", `${category}_player_list.csv`);
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+        // Auto-adjust column width (approximate)
+        const colWidths = [{ wch: 20 }, { wch: 20 }, { wch: 10 }, { wch: 10 }];
+        worksheet['!cols'] = colWidths;
+
+        // Create Workbook
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, "Auction Summary");
+
+        // Write and Download
+        XLSX.writeFile(workbook, `${category}_auction_list.xlsx`);
     };
 
-    const handleDeleteAuction = async () => {
-        if (!confirm('CRITICAL WARNING: This will DELETE all teams and players for this category permanently. Are you sure?')) return;
 
-        await fetch(`/api/teams?category=${category}`, { method: 'DELETE' });
-        router.push(`/${category}`);
-    };
 
     if (loading) return <div className="flex-center" style={{ height: '100vh' }}>Loading Auction...</div>;
 
@@ -170,15 +171,13 @@ export default function AuctionRoom({ params }) {
                     </p>
 
                     <div className="col">
-                        <button onClick={handleDownloadCSV} className="btn-primary" style={{ width: '100%', fontSize: '1.2rem' }}>
-                            Download Full Player List CSV 📥
+                        <button onClick={handleDownloadExcel} className="btn-primary" style={{ width: '100%', fontSize: '1.2rem' }}>
+                            Download Full Player List Excel �
                         </button>
 
                         <div style={{ margin: '2rem 0', borderTop: '1px solid var(--glass-border)' }}></div>
 
-                        <button onClick={handleDeleteAuction} className="btn-secondary" style={{ width: '100%', borderColor: 'var(--danger)', color: 'var(--danger)' }}>
-                            Delete Session & Exit 🗑️
-                        </button>
+
                         <button onClick={() => setFinished(false)} className="btn-secondary" style={{ width: '100%' }}>
                             Return to Auction Room
                         </button>
@@ -199,7 +198,7 @@ export default function AuctionRoom({ params }) {
                         <button onClick={() => setFinished(true)} className="btn-secondary" style={{ background: 'var(--primary)', color: '#000', fontWeight: 'bold', border: 'none' }}>
                             Finish Auction
                         </button>
-                        <button onClick={() => router.push(`/${category}`)} className="btn-secondary" style={{ fontSize: '0.8rem' }}>Setup / Exit</button>
+                        <button onClick={() => router.push(`/${category}`)} className="btn-secondary" style={{ fontSize: '0.8rem' }}>Back to Auction Table</button>
                     </div>
                 </div>
 
@@ -260,58 +259,54 @@ export default function AuctionRoom({ params }) {
                     </div>
                 </div>
 
-                {/* Activity Log */}
-                {lastSold && (
-                    <div className="glass-card animate-fade-in pulse-effect" style={{ marginTop: '2rem', background: 'rgba(16, 185, 129, 0.1)', borderColor: 'var(--success)' }}>
-                        <div className="flex-between" style={{ alignItems: 'flex-start' }}>
-                            <div>
-                                <h3 style={{ color: 'var(--success)', margin: 0 }}>Last Sale</h3>
-                                <span style={{ fontSize: '0.9rem', opacity: 0.8 }}>Just Now</span>
+                {/* Activity Log / Auction History */}
+                <div className="glass-card" style={{ marginTop: '2rem', maxHeight: '400px', overflowY: 'auto' }}>
+                    <h3 className="text-gradient" style={{ marginBottom: '1rem', position: 'sticky', top: 0, background: 'var(--background)', zIndex: 1, paddingBottom: '0.5rem', borderBottom: '1px solid var(--glass-border)' }}>
+                        Auction Log
+                    </h3>
+
+                    {teams.flatMap(t => t.playersBought.map(p => ({ ...p, teamName: t.name })))
+                        .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
+                        .map((player, idx) => (
+                            <div key={player._id} className="animate-fade-in" style={{
+                                padding: '1rem',
+                                background: idx === 0 ? 'rgba(16, 185, 129, 0.1)' : 'rgba(255,255,255,0.03)',
+                                borderLeft: `4px solid ${idx === 0 ? 'var(--success)' : 'var(--text-muted)'}`,
+                                marginBottom: '0.8rem',
+                                borderRadius: '4px'
+                            }}>
+                                <div className="flex-between">
+                                    <span style={{ fontWeight: 'bold', fontSize: '1.1rem' }}>{player.name}</span>
+                                    <span style={{ color: 'var(--success)', fontWeight: 'bold' }}>₹ {player.soldPrice?.toLocaleString()}</span>
+                                </div>
+                                <div className="flex-between" style={{ marginTop: '0.4rem', fontSize: '0.9rem', color: 'var(--text-muted)' }}>
+                                    <span>Sold to <strong style={{ color: 'var(--secondary)' }}>{player.teamName}</strong></span>
+                                    <span>{new Date(player.updatedAt).toLocaleTimeString()}</span>
+                                </div>
+                                {idx === 0 && (
+                                    <div style={{ marginTop: '0.8rem', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                                        <button
+                                            onClick={() => {
+                                                setLastSold({ name: player.name, amount: player.soldPrice, team: player.teamName, playerId: player._id });
+                                                setEditName(player.name);
+                                                setEditAmount(player.soldPrice);
+                                                setIsEditing(true);
+                                            }}
+                                            className="btn-secondary"
+                                            style={{ fontSize: '0.8rem', padding: '4px 10px' }}
+                                        >
+                                            Edit ✏️
+                                        </button>
+
+                                    </div>
+                                )}
                             </div>
-                            <div style={{ display: 'flex', gap: '0.5rem' }}>
-                                <button
-                                    onClick={() => {
-                                        setEditName(lastSold.name);
-                                        setEditAmount(lastSold.amount);
-                                        setIsEditing(true);
-                                    }}
-                                    className="btn-secondary"
-                                    style={{
-                                        fontSize: '0.9rem',
-                                        padding: '8px 16px',
-                                        borderColor: 'var(--primary)',
-                                        color: 'var(--primary)',
-                                        whiteSpace: 'nowrap'
-                                    }}
-                                >
-                                    Edit ✏️
-                                </button>
-                                <button
-                                    onClick={handleUndo}
-                                    className="btn-secondary"
-                                    style={{
-                                        fontSize: '0.9rem',
-                                        padding: '8px 16px',
-                                        background: 'rgba(239, 68, 68, 0.2)',
-                                        borderColor: 'var(--danger)',
-                                        color: '#fff',
-                                        whiteSpace: 'nowrap'
-                                    }}
-                                >
-                                    Undo Mistake ↩️
-                                </button>
-                            </div>
-                        </div>
-                        <p style={{ fontSize: '1.8rem', margin: '0.5rem 0', lineHeight: 1.2 }}>
-                            <span style={{ color: 'white', fontWeight: 'bold' }}>{lastSold.name}</span> <br />
-                            <span style={{ fontSize: '1.2rem', color: 'var(--text-muted)' }}>sold to</span> <br />
-                            <span className="text-gradient" style={{ fontWeight: 'bold' }}>{lastSold.team}</span>
-                        </p>
-                        <div style={{ fontSize: '2rem', fontWeight: 'bold', color: 'var(--success)', marginTop: '0.5rem' }}>
-                            ₹ {Number(lastSold.amount).toLocaleString()}
-                        </div>
-                    </div>
-                )}
+                        ))}
+
+                    {teams.every(t => t.playersBought.length === 0) && (
+                        <p style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '2rem' }}>No players sold yet.</p>
+                    )}
+                </div>
             </div>
 
             {/* Leaderboard / Team Tracker */}
@@ -369,6 +364,20 @@ export default function AuctionRoom({ params }) {
                                         onChange={e => setEditAmount(e.target.value)}
                                         style={{ width: '100%', padding: '1rem', fontSize: '1.2rem', marginTop: '0.5rem' }}
                                     />
+                                </div>
+                                <div>
+                                    <label>Correct Team</label>
+                                    <select
+                                        value={editTeam}
+                                        onChange={e => setEditTeam(e.target.value)}
+                                        style={{ width: '100%', padding: '1rem', fontSize: '1.2rem', marginTop: '0.5rem' }}
+                                    >
+                                        {teams.map(t => (
+                                            <option key={t._id} value={t._id}>
+                                                {t.name} (Rem: {t.remainingBudget})
+                                            </option>
+                                        ))}
+                                    </select>
                                 </div>
 
                                 <div className="flex-between" style={{ marginTop: '1rem' }}>

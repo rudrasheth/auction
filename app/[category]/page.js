@@ -6,7 +6,8 @@ export default function SetupPage({ params }) {
     const { category } = use(params);
     const router = useRouter();
     const [loading, setLoading] = useState(true);
-    const [existingTeams, setExistingTeams] = useState([]);
+    const [existingTeams, setExistingTeams] = useState([]); // This will now hold teams for current category
+    const [activeSessions, setActiveSessions] = useState([]); // All active sessions summary
 
     // Form State
     const [numTeams, setNumTeams] = useState('');
@@ -15,16 +16,25 @@ export default function SetupPage({ params }) {
     const [isSubmitting, setIsSubmitting] = useState(false);
 
     useEffect(() => {
-        // Check for existing session
-        fetch(`/api/teams?category=${category}`)
-            .then(res => res.json())
-            .then(data => {
-                if (data.teams) {
-                    setExistingTeams(data.teams);
+        // Fetch current category teams
+        const fetchCurrent = fetch(`/api/teams?category=${category}`).then(res => res.json());
+        // Fetch all active sessions summary
+        const fetchAll = fetch(`/api/teams`).then(res => res.json());
+
+        Promise.all([fetchCurrent, fetchAll])
+            .then(([currentData, allData]) => {
+                if (currentData.teams) {
+                    setExistingTeams(currentData.teams);
+                }
+                if (allData.sessions) {
+                    setActiveSessions(allData.sessions);
                 }
                 setLoading(false);
             })
-            .catch(err => setLoading(false));
+            .catch(err => {
+                console.error(err);
+                setLoading(false);
+            });
     }, [category]);
 
     const handleNumChange = (e) => {
@@ -48,6 +58,33 @@ export default function SetupPage({ params }) {
         setTeamNames(newNames);
     };
 
+    const handleDeleteSession = async (targetCategory) => {
+        if (!confirm(`Are you sure you want to DELETE the ${targetCategory} session? This will remove all teams and sold players permanently.`)) return;
+
+        setLoading(true);
+        try {
+            const res = await fetch(`/api/teams?category=${targetCategory}`, {
+                method: 'DELETE',
+            });
+            if (res.ok) {
+                if (targetCategory.toLowerCase() === category.toLowerCase()) {
+                    setExistingTeams([]);
+                }
+                // Refresh active sessions
+                const refresh = await fetch('/api/teams').then(r => r.json());
+                if (refresh.sessions) setActiveSessions(refresh.sessions);
+
+                alert('Session deleted successfully.');
+            } else {
+                alert('Failed to delete session.');
+            }
+        } catch (error) {
+            console.error('Error deleting session:', error);
+            alert('Error deleting session.');
+        }
+        setLoading(false);
+    };
+
     const startAuction = async () => {
         setIsSubmitting(true);
         const teamsPayload = teamNames.map(name => ({
@@ -55,19 +92,34 @@ export default function SetupPage({ params }) {
             totalBudget: Number(budget)
         }));
 
-        const res = await fetch('/api/teams', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ category, teams: teamsPayload })
-        });
+        try {
+            const res = await fetch('/api/teams', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ category, teams: teamsPayload })
+            });
 
-        if (res.ok) {
-            router.push(`/${category}/auction`);
-        } else {
-            alert('Failed to setup');
+            if (res.ok) {
+                router.push(`/${category}/auction`);
+            } else {
+                const text = await res.text();
+                try {
+                    const data = JSON.parse(text);
+                    alert(`Failed to setup: ${data.error || 'Unknown error'}`);
+                } catch (e) {
+                    console.error('Failed to parse error response:', text);
+                    alert(`Failed to setup: Server returned ${res.status} ${res.statusText}. Check server logs.`);
+                }
+                setIsSubmitting(false);
+            }
+        } catch (error) {
+            console.error('Error starting auction:', error);
+            alert('Failed to setup: Network or Server Error. Check if the server is running and accessible.');
             setIsSubmitting(false);
         }
     };
+
+
 
     if (loading) return (
         <div className="flex-center" style={{ height: '100vh' }}>
@@ -82,17 +134,36 @@ export default function SetupPage({ params }) {
                 <button onClick={() => router.push('/')} className="btn-secondary">Back to Home</button>
             </div>
 
-            {existingTeams.length > 0 && (
+            {activeSessions.length > 0 && (
                 <div className="glass-card" style={{ marginBottom: '2rem', border: '1px solid var(--secondary)' }}>
-                    <h3 className="text-gradient">Active Session Found</h3>
-                    <p>There is an ongoing auction with {existingTeams.length} teams.</p>
-                    <button
-                        onClick={() => router.push(`/${category}/auction`)}
-                        className="btn-primary"
-                        style={{ marginTop: '1rem', width: '100%' }}
-                    >
-                        Continue Auction &rarr;
-                    </button>
+                    <h3 className="text-gradient">Active Sessions Found</h3>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem', marginTop: '1rem' }}>
+                        {activeSessions
+                            .filter(session => session._id.toLowerCase() === category.toLowerCase())
+                            .map((session, idx) => (
+                                <div key={idx} style={{ background: 'rgba(255,255,255,0.05)', padding: '1rem', borderRadius: '8px', border: '1px solid var(--glass-border)' }}>
+                                    <h4 style={{ textTransform: 'capitalize', marginBottom: '0.5rem' }}>{session._id} Auction</h4>
+                                    <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>{session.count} Teams Active</p>
+                                    <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
+                                        <button
+                                            onClick={() => router.push(`/${session._id.toLowerCase()}/auction`)}
+                                            className="btn-primary"
+                                            style={{ flex: 1, fontSize: '0.9rem' }}
+                                        >
+                                            Continue &rarr;
+                                        </button>
+                                        <button
+                                            onClick={() => handleDeleteSession(session._id)}
+                                            className="btn-secondary"
+                                            style={{ background: 'rgba(239, 68, 68, 0.2)', color: '#ef4444', borderColor: '#ef4444', padding: '0.5rem' }}
+                                            title="Delete Session"
+                                        >
+                                            &#10005;
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+                    </div>
                 </div>
             )}
 

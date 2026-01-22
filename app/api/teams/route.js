@@ -1,5 +1,6 @@
 import dbConnect from '@/lib/db';
 import Team from '@/models/Team';
+import Player from '@/models/Player'; // Ensure Player model is registered
 import { NextResponse } from 'next/server';
 
 export async function GET(request) {
@@ -7,12 +8,20 @@ export async function GET(request) {
     const { searchParams } = new URL(request.url);
     const category = searchParams.get('category'); // e.g., 'men', 'women', 'kids'
 
-    // Standardize category to Title Case for DB query (Men, Women, Kids)
-    const catTitle = category ? category.charAt(0).toUpperCase() + category.slice(1).toLowerCase() : null;
-
-    if (!catTitle) {
-        return NextResponse.json({ error: 'Category required' }, { status: 400 });
+    if (!category) {
+        // Return summary of active sessions
+        try {
+            const sessions = await Team.aggregate([
+                { $group: { _id: "$category", count: { $sum: 1 } } }
+            ]);
+            return NextResponse.json({ sessions });
+        } catch (error) {
+            return NextResponse.json({ error: error.message }, { status: 500 });
+        }
     }
+
+    // Standardize category to Title Case for DB query (Men, Women, Kids)
+    const catTitle = category.charAt(0).toUpperCase() + category.slice(1).toLowerCase();
 
     try {
         const teams = await Team.find({ category: catTitle })
@@ -25,9 +34,12 @@ export async function GET(request) {
 }
 
 export async function POST(request) {
+    console.log('[API] POST /api/teams called');
     await dbConnect();
+    console.log('[API] DB Connected');
     try {
         const body = await request.json();
+        console.log('[API] Body received:', body);
         const { category, teams } = body;
 
         // teams: [{ name: 'A', totalBudget: 100 }, ...]
